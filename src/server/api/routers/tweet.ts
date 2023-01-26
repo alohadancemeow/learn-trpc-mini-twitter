@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { createTRPCRouter, publicProcedure, protectedProcedure } from "../trpc";
-import { tweetSchema } from "../../../types/mytypes";
+import { getTweetSchema, tweetSchema } from "../../../types/mytypes";
+import { TRPCClientError } from "@trpc/client";
+import { TRPCError } from "@trpc/server";
 
 export const tweetRouter = createTRPCRouter({
   createTweet: protectedProcedure
@@ -10,33 +12,25 @@ export const tweetRouter = createTRPCRouter({
       const { text } = input;
       const { id: userId } = session.user;
 
-      return await prisma.tweet.create({
-        data: {
-          text,
-          author: {
-            connect: {
-              id: userId,
+      try {
+        const tweet = await prisma.tweet.create({
+          data: {
+            text,
+            author: {
+              connect: {
+                id: userId,
+              },
             },
           },
-        },
-      });
+        });
+
+        return tweet;
+      } catch (error: any) {
+        console.log(`err on createTweet ${error?.message}`);
+      }
     }),
   getTweets: publicProcedure
-    .input(
-      z.object({
-        where: z
-          .object({
-            author: z
-              .object({
-                name: z.string().optional(),
-              })
-              .optional(),
-          })
-          .optional(),
-        cursor: z.string().nullish(),
-        limit: z.number().min(1).max(100).default(10),
-      })
-    )
+    .input(getTweetSchema)
     .query(async ({ ctx, input }) => {
       const { prisma } = ctx;
       const { limit, cursor, where } = input;
