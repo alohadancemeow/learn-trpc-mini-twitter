@@ -24,16 +24,26 @@ export const tweetRouter = createTRPCRouter({
   getTweets: publicProcedure
     .input(
       z.object({
+        where: z
+          .object({
+            author: z
+              .object({
+                name: z.string().optional(),
+              })
+              .optional(),
+          })
+          .optional(),
         cursor: z.string().nullish(),
         limit: z.number().min(1).max(100).default(10),
       })
     )
     .query(async ({ ctx, input }) => {
       const { prisma } = ctx;
-      const { limit, cursor } = input;
+      const { limit, cursor, where } = input;
 
       const tweets = await prisma.tweet.findMany({
         take: limit + 1,
+        where,
         orderBy: {
           createdAt: "desc",
         },
@@ -44,6 +54,19 @@ export const tweetRouter = createTRPCRouter({
               id: true,
               image: true,
               name: true,
+            },
+          },
+          likes: {
+            where: {
+              userId: ctx.session?.user?.id,
+            },
+            select: {
+              userId: true,
+            },
+          },
+          _count: {
+            select: {
+              likes: true,
             },
           },
         },
@@ -57,5 +80,44 @@ export const tweetRouter = createTRPCRouter({
       }
 
       return { tweets, nextCursor };
+    }),
+
+  like: protectedProcedure
+    .input(z.object({ tweetId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { prisma, session } = ctx;
+      const { id: userId } = session.user;
+      const { tweetId } = input;
+
+      return await prisma.like.create({
+        data: {
+          tweet: {
+            connect: {
+              id: tweetId,
+            },
+          },
+          user: {
+            connect: {
+              id: userId,
+            },
+          },
+        },
+      });
+    }),
+  unlike: protectedProcedure
+    .input(z.object({ tweetId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { prisma, session } = ctx;
+      const { id: userId } = session.user;
+      const { tweetId } = input;
+
+      return await prisma.like.delete({
+        where: {
+          tweetId_userId: {
+            tweetId,
+            userId,
+          },
+        },
+      });
     }),
 });

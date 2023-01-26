@@ -9,7 +9,14 @@ const CreateTweet = (props: Props) => {
   const [text, setText] = useState("");
   const [error, setError] = useState("");
 
-  const { mutateAsync } = trpc.tweet.createTweet.useMutation();
+  const utils = trpc.useContext();
+
+  const { mutateAsync } = trpc.tweet.createTweet.useMutation({
+    onSuccess: () => {
+      setText("");
+      utils.tweet.getTweets.invalidate();
+    },
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,16 +36,18 @@ const CreateTweet = (props: Props) => {
       {error && JSON.stringify(error)}
       <form
         onSubmit={handleSubmit}
-        className="mb-4 flex w-full flex-col rounded-md border-2 p-4"
+        className="mb-4 mt-5 flex w-full flex-col rounded-md border-2 p-4"
       >
         <textarea
           className="w-full p-4 shadow"
+          value={text}
+          placeholder="What's happening?"
           onChange={(e) => setText(e.target.value)}
         />
 
         <div className="mt-4 flex justify-end">
           <button
-            className="bg-primary rounded-md px-4 py-2 text-white"
+            className="rounded-md bg-primary px-4 py-2 text-white"
             type="submit"
           >
             Tweet

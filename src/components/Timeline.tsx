@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import CreateTweet from "./CreateTweet";
-import { RouterOutputs, api as trpc } from "../utils/api";
+import { RouterInputs, RouterOutputs, api as trpc } from "../utils/api";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -9,6 +9,11 @@ import relativeTime from "dayjs/plugin/relativeTime";
 import updateLocal from "dayjs/plugin/updateLocale";
 
 import { AiFillHeart } from "react-icons/ai";
+import {
+  InfiniteData,
+  QueryClient,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 // Format date
 dayjs.extend(relativeTime);
@@ -32,9 +37,7 @@ dayjs.updateLocale("en", {
   },
 });
 
-type Props = {};
-
-// useScroll
+// Custom hook: useScroll
 const useSroollPosition = () => {
   const [scrollPosition, setScrollPosition] = useState(0);
 
@@ -62,12 +65,92 @@ const useSroollPosition = () => {
   return scrollPosition;
 };
 
+// UpdateCache
+type UpdateCacheTpye = {
+  client: QueryClient;
+  variables: { tweetId: string };
+  data: { userId: string };
+  action: "like" | "unlike";
+  input: RouterInputs["tweet"]["getTweets"];
+};
+const updateCache = ({
+  client,
+  action,
+  data,
+  input,
+  variables,
+}: UpdateCacheTpye) => {
+  client.setQueryData(
+    [
+      ["tweet", "getTweets"],
+      {
+        input,
+        type: "infinite",
+      },
+    ],
+    (oldData) => {
+      const newData = oldData as InfiniteData<
+        RouterOutputs["tweet"]["getTweets"]
+      >;
+
+      const value = action === "like" ? 1 : -1;
+
+      const newTweets = newData.pages.map((page) => {
+        return {
+          tweets: page.tweets.map((tweet) => {
+            if (tweet.id === variables.tweetId) {
+              return {
+                ...tweet,
+                likes: action === "like" ? [data.userId] : [],
+                _count: {
+                  likes: tweet._count.likes + value,
+                },
+              };
+            }
+
+            return tweet;
+          }),
+        };
+      });
+
+      return { ...newData, pages: newTweets };
+    }
+  );
+};
+
 // Tweet component
-const Tweet = ({
-  tweet,
-}: {
+type TweetRequest = {
   tweet: RouterOutputs["tweet"]["getTweets"]["tweets"][number];
-}) => {
+  client: QueryClient;
+  input: RouterInputs["tweet"]["getTweets"];
+};
+const Tweet = ({ tweet, client, input }: TweetRequest) => {
+  // Call like-unlike mutations
+  const { mutateAsync: likeMutation } = trpc.tweet.like.useMutation({
+    onSuccess(data, variables) {
+      updateCache({ client, data, variables, action: "like", input });
+    },
+  });
+  const { mutateAsync: unlikeMutation } = trpc.tweet.unlike.useMutation({
+    onSuccess(data, variables) {
+      updateCache({ client, data, variables, action: "unlike", input });
+    },
+  });
+
+  const hasLiked = tweet.likes.length > 0;
+
+  // Handle like actions
+  const handleLike = () => {
+    if (hasLiked) {
+      unlikeMutation({
+        tweetId: tweet.id,
+      });
+      return;
+    }
+
+    likeMutation({ tweetId: tweet.id });
+  };
+
   return (
     <div className="mb-4 border-b-2 border-gray-500">
       <div className="flex p-2">
@@ -98,36 +181,30 @@ const Tweet = ({
         </div>
       </div>
 
-      {/* <div className="mt-4 flex items-center p-2">
+      <div className="mt-4 flex items-center p-2">
         <AiFillHeart
           color={hasLiked ? "red" : "gray"}
           size="1.5rem"
-          onClick={() => {
-            if (hasLiked) {
-              unlikeMutation({
-                tweetId: tweet.id,
-              });
-              return;
-            }
-
-            likeMutation({
-              tweetId: tweet.id,
-            });
-          }}
+          onClick={handleLike}
         />
 
         <span className="text-sm text-gray-500">{tweet._count.likes}</span>
-      </div> */}
+      </div>
     </div>
   );
 };
 
-const Timeline = (props: Props) => {
+type Props = {
+  where?: RouterInputs["tweet"]["getTweets"]["where"];
+};
+const Timeline = ({ where = {} }: Props) => {
+  const client = useQueryClient();
+
   const scrollPosition = useSroollPosition();
 
   const { data, hasNextPage, fetchNextPage, isFetching } =
     trpc.tweet.getTweets.useInfiniteQuery(
-      { limit: 10 },
+      { limit: 10, where },
       { getNextPageParam: (lastPage) => lastPage.nextCursor }
     );
 
@@ -144,7 +221,14 @@ const Timeline = (props: Props) => {
       <CreateTweet />
       <div className="border-l-2 border-r-2 border-gray-500">
         {tweets.map((tweet) => {
-          return <Tweet key={tweet.id} tweet={tweet} />;
+          return (
+            <Tweet
+              key={tweet.id}
+              tweet={tweet}
+              client={client}
+              input={{ where, limit: 10 }}
+            />
+          );
         })}
 
         {!hasNextPage && <p>No more items to load</p>}
